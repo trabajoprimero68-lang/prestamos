@@ -7,6 +7,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
+import '../../features/clients/presentation/clients_screen.dart';
+import '../../features/loans/presentation/loans_screen.dart';
+import '../../features/payments/presentation/payments_screen.dart';
+import '../../features/boxes/presentation/boxes_screen.dart';
 
 /// Provider para el router
 final routerProvider = Provider<GoRouter>((ref) {
@@ -32,36 +36,28 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/clients',
         name: 'clients',
-        builder: (context, state) => const Scaffold(
-          body: Center(child: Text('Pantalla de Clientes - Por implementar')),
-        ),
+        builder: (context, state) => const ClientsScreen(),
       ),
       
       // Ruta de préstamos
       GoRoute(
         path: '/loans',
         name: 'loans',
-        builder: (context, state) => const Scaffold(
-          body: Center(child: Text('Pantalla de Préstamos - Por implementar')),
-        ),
+        builder: (context, state) => const LoansScreen(),
       ),
       
       // Ruta de cobros
       GoRoute(
         path: '/payments',
         name: 'payments',
-        builder: (context, state) => const Scaffold(
-          body: Center(child: Text('Pantalla de Cobros - Por implementar')),
-        ),
+        builder: (context, state) => const PaymentsScreen(),
       ),
       
       // Ruta de cajas
       GoRoute(
         path: '/boxes',
         name: 'boxes',
-        builder: (context, state) => const Scaffold(
-          body: Center(child: Text('Pantalla de Cajas - Por implementar')),
-        ),
+        builder: (context, state) => const BoxesScreen(),
       ),
       
       // Ruta de configuración de moras

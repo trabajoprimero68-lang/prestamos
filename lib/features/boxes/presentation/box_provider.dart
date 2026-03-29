@@ -8,8 +8,8 @@ import '../../auth/domain/providers/auth_provider.dart';
 
 /// Provider para abrir una caja (solo admin)
 final openBoxProvider = FutureProvider.family<CashBoxEntity?, String>((ref, cobradorId) async {
-  final client = ref.watch(supabaseClientProvider);
-  
+  final client = Supabase.instance.client;
+   
   final response = await client
       .from('cash_boxes')
       .select()
@@ -169,19 +169,141 @@ class BoxNotifier extends StateNotifier<AsyncValue<CashBoxEntity?>> {
 
 /// Provider para el notifier de cajas
 final boxNotifierProvider = StateNotifierProvider<BoxNotifier, AsyncValue<CashBoxEntity?>>((ref) {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   return BoxNotifier(client, ref);
+});
+
+/// Provider para obtener la caja actual del usuario logueado
+final currentUserBoxProvider = FutureProvider<CashBoxEntity?>((ref) async {
+  final client = Supabase.instance.client;
+  final user = client.auth.currentUser;
+  
+  if (user == null) return null;
+  
+  final response = await client
+      .from('cash_boxes')
+      .select()
+      .eq('cobrador_id', user.id)
+      .eq('estado', 'abierta')
+      .maybeSingle();
+
+  if (response == null) return null;
+  return CashBoxEntity.fromJson(response);
 });
 
 /// Provider para movimientos de caja
 final boxMovementsProvider = FutureProvider.family<List<CashBoxMovement>, String>((ref, boxId) async {
-  final client = ref.watch(supabaseClientProvider);
-  
-  final response = await client
+  final client = Supabase.instance.client;
+   
+  // Obtener movimientos
+  final movements = await client
       .from('cash_box_movements')
       .select()
       .eq('box_id', boxId)
       .order('created_at', ascending: false);
   
-  return response.map((json) => CashBoxMovement.fromJson(json)).toList();
+  // Para cada movimiento, obtener más detalles
+  final List<CashBoxMovement> result = [];
+  
+  for (final movement in movements) {
+    final type = movement['type'] as String;
+    String? description = movement['description'] as String?;
+    String? reference = '';
+    
+    if (type == 'cobro' && description != null && description.contains('Cobro de cuota')) {
+      // Buscar el payment_attempt para obtener info del cliente
+      try {
+        final attempts = await client
+            .from('payment_attempts')
+            .select('''
+              installments!inner(
+                loans!inner(
+                  clients!inner(nombre)
+                ),
+                numero_cuota
+              )
+            ''')
+            .eq('resultado', 'pagado')
+            .eq('monto_cobrado', double.tryParse(description.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0)
+            .order('created_at', ascending: false)
+            .limit(1);
+        
+        if (attempts.isNotEmpty) {
+          final attempt = attempts.first;
+          final cliente = attempt['installments']['loans']['clients']['nombre'] as String?;
+          final cuota = attempt['installments']['numero_cuota'] as int?;
+          if (cliente != null) {
+            reference = '$cliente - Cuota #$cuota';
+          }
+        }
+      } catch (e) {
+        // Si falla, usar la descripción original
+        reference = description;
+      }
+    } else if (type == 'egreso' && description != null && description.contains('Entrega de préstamo')) {
+      // Buscar el delivery_attempt para obtener info del cliente
+      try {
+        final deliveries = await client
+            .from('delivery_attempts')
+            .select('''
+              loans!inner(
+                clients!inner(nombre)
+              ),
+              loans!inner(monto)
+            ''')
+            .eq('resultado', 'entregado')
+            .order('created_at', ascending: false)
+            .limit(1);
+        
+        if (deliveries.isNotEmpty) {
+          final delivery = deliveries.first;
+          final cliente = delivery['loans']['clients']['nombre'] as String?;
+          final monto = delivery['loans']['monto'] as double?;
+          if (cliente != null) {
+            reference = '$cliente - \$${monto?.toStringAsFixed(2)}';
+          }
+        }
+      } catch (e) {
+        reference = description;
+      }
+    }
+    
+    result.add(CashBoxMovement.fromJson(movement, reference: reference));
+  }
+  
+  return result;
 });
+
+/// Provider para totales de caja
+final boxTotalsProvider = FutureProvider.family<BoxTotals, String>((ref, boxId) async {
+  final client = Supabase.instance.client;
+   
+  final response = await client
+      .from('cash_box_movements')
+      .select('type, amount')
+      .eq('box_id', boxId);
+  
+  double totalCobros = 0;
+  double totalEgresos = 0;
+  
+  for (final row in response) {
+    final type = row['type'] as String;
+    final amount = (row['amount'] as num).toDouble();
+    
+    if (type == 'cobro') {
+      totalCobros += amount;
+    } else if (type == 'egreso') {
+      totalEgresos += amount.abs();
+    }
+  }
+  
+  return BoxTotals(totalCobros: totalCobros, totalEgresos: totalEgresos);
+});
+
+/// Clase para totales de caja
+class BoxTotals {
+  final double totalCobros;
+  final double totalEgresos;
+  
+  BoxTotals({required this.totalCobros, required this.totalEgresos});
+}

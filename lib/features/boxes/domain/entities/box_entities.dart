@@ -5,7 +5,7 @@ import 'package:equatable/equatable.dart';
 
 enum BoxState { abierta, cerrada }
 
-enum MovementType { apertura, cobro, rendicion, ajuste }
+enum MovementType { apertura, cobro, egreso, rendicion, ajuste }
 
 class CashBoxEntity extends Equatable {
   final String id;
@@ -65,6 +65,7 @@ class CashBoxMovement extends Equatable {
   final MovementType type;
   final double amount;
   final String? description;
+  final String? reference;
   final DateTime createdAt;
 
   const CashBoxMovement({
@@ -73,16 +74,18 @@ class CashBoxMovement extends Equatable {
     required this.type,
     required this.amount,
     this.description,
+    this.reference,
     required this.createdAt,
   });
 
-  factory CashBoxMovement.fromJson(Map<String, dynamic> json) {
+  factory CashBoxMovement.fromJson(Map<String, dynamic> json, {String? reference}) {
     return CashBoxMovement(
       id: json['id'] as String,
       boxId: json['box_id'] as String,
       type: _parseMovementType(json['type'] as String),
       amount: (json['amount'] as num).toDouble(),
       description: json['description'] as String?,
+      reference: reference,
       createdAt: DateTime.parse(json['created_at'] as String),
     );
   }
@@ -93,6 +96,8 @@ class CashBoxMovement extends Equatable {
         return MovementType.apertura;
       case 'cobro':
         return MovementType.cobro;
+      case 'egreso':
+        return MovementType.egreso;
       case 'rendicion':
         return MovementType.rendicion;
       case 'ajuste':
@@ -103,5 +108,5 @@ class CashBoxMovement extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, boxId, type, amount, description, createdAt];
+  List<Object?> get props => [id, boxId, type, amount, description, reference, createdAt];
 }

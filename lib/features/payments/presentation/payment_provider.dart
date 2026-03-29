@@ -8,7 +8,7 @@ import '../../auth/domain/providers/auth_provider.dart';
 
 /// Provider para obtener configuración de mora
 final moraConfigProvider = FutureProvider<double>((ref) async {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   
   final response = await client
       .from('mora_config')
@@ -24,7 +24,7 @@ final moraConfigProvider = FutureProvider<double>((ref) async {
 
 /// Provider para cuotas pendientes de hoy
 final todayPaymentsProvider = FutureProvider<List<InstallmentEntity>>((ref) async {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   final today = DateTime.now();
   final dateStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
   
@@ -45,7 +45,7 @@ final todayPaymentsProvider = FutureProvider<List<InstallmentEntity>>((ref) asyn
 
 /// Provider para cuotas vencidas
 final overduePaymentsProvider = FutureProvider<List<InstallmentEntity>>((ref) async {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   final today = DateTime.now();
   final dateStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
   
@@ -141,33 +141,109 @@ class PaymentNotifier extends StateNotifier<AsyncValue<void>> {
         'observaciones': observaciones,
       });
 
+      // Registrar cobro en la caja (si existe caja abierta)
+      await _registerInBox(userId, montoCobrado, 'Cobro de cuota', installmentId);
+
       // Si hay mora, registrarla en la tabla de moras
       if (mora > 0) {
-        final installment = await _client
-            .from('installments')
-            .select()
-            .eq('id', installmentId)
-            .single();
-        
-        final fechaVencimiento = DateTime.parse(installment['fecha_vencimiento'] as String);
-        final diasAtraso = DateTime.now().difference(fechaVencimiento).inDays;
+        try {
+          final installment = await _client
+              .from('installments')
+              .select()
+              .eq('id', installmentId)
+              .maybeSingle();
+          
+          if (installment != null) {
+            final fechaVencimiento = DateTime.parse(installment['fecha_vencimiento'] as String);
+            final diasAtraso = DateTime.now().difference(fechaVencimiento).inDays;
 
-        await _client.from('moras').insert({
-          'installment_id': installmentId,
-          'monto': mora,
-          'dias_atraso': diasAtraso,
-          'fecha_aplicacion': DateTime.now().toIso8601String().split('T')[0],
-        });
+            await _client.from('moras').insert({
+              'installment_id': installmentId,
+              'monto': mora,
+              'dias_atraso': diasAtraso,
+              'fecha_aplicacion': DateTime.now().toIso8601String().split('T')[0],
+            });
+          }
+        } catch (e) {
+          // Si falla el registro de mora, no importa, el pago ya se hizo
+        }
       }
 
       // Verificar si el préstamo está completamente pagado
-      await _checkLoanCompletion(installmentId);
+      try {
+        await _checkLoanCompletion(installmentId);
+      } catch (e) {
+        // Si falla la verificación, no importa, el pago ya se registró
+      }
 
       state = const AsyncValue.data(null);
       return true;
     } catch (e, st) {
       state = AsyncValue.error(e, st);
       return false;
+    }
+  }
+
+  /// Registrar un cobro en la caja del cobrador
+  Future<void> _registerInBox(String userId, double amount, String description, String? installmentId) async {
+    try {
+      // Buscar caja abierta del usuario
+      final box = await _client
+          .from('cash_boxes')
+          .select('id, current_amount')
+          .eq('cobrador_id', userId)
+          .eq('estado', 'abierta')
+          .maybeSingle();
+
+      if (box != null) {
+        final boxId = box['id'] as String;
+        final currentAmount = (box['current_amount'] as num).toDouble();
+        final newAmount = currentAmount + amount;
+
+        // Obtener nombre del cliente para el movimiento
+        String clientName = '';
+        if (installmentId != null) {
+          try {
+            final installment = await _client
+                .from('installments')
+                .select('loan_id')
+                .eq('id', installmentId)
+                .single();
+            
+            final loan = await _client
+                .from('loans')
+                .select('client_id')
+                .eq('id', installment['loan_id'])
+                .single();
+            
+            final client = await _client
+                .from('clients')
+                .select('nombre')
+                .eq('id', loan['client_id'])
+                .single();
+            
+            clientName = client['nombre'] as String? ?? '';
+          } catch (e) {
+            // Si falla, continúa sin nombre
+          }
+        }
+
+        // Actualizar monto de la caja
+        await _client.from('cash_boxes').update({
+          'current_amount': newAmount,
+        }).eq('id', boxId);
+
+        // Registrar movimiento con nombre del cliente
+        await _client.from('cash_box_movements').insert({
+          'box_id': boxId,
+          'type': 'cobro',
+          'amount': amount,
+          'description': clientName.isNotEmpty ? '$clientName - Cobro' : description,
+        });
+      }
+    } catch (e) {
+      // Si falla el registro en caja, no rompo el flujo del pago
+      print('Error al registrar en caja: $e');
     }
   }
 
@@ -218,7 +294,25 @@ class PaymentNotifier extends StateNotifier<AsyncValue<void>> {
       final userId = _client.auth.currentUser?.id;
       if (userId == null) return false;
 
-      // Registrar intento sin cambiar estado
+      // Obtener la cuota actual
+      final installment = await _client
+          .from('installments')
+          .select('fecha_vencimiento')
+          .eq('id', installmentId)
+          .single();
+
+      // Calcular nueva fecha de vencimiento (día siguiente)
+      final fechaActual = DateTime.parse(installment['fecha_vencimiento'] as String);
+      final nuevaFecha = fechaActual.add(const Duration(days: 1));
+      final nuevaFechaStr = nuevaFecha.toIso8601String().split('T')[0];
+
+      // Actualizar fecha de vencimiento al día siguiente
+      await _client.from('installments').update({
+        'fecha_vencimiento': nuevaFechaStr,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', installmentId);
+
+      // Registrar intento de cobro diferido
       await _client.from('payment_attempts').insert({
         'installment_id': installmentId,
         'cobrador_id': userId,
@@ -267,20 +361,24 @@ class PaymentNotifier extends StateNotifier<AsyncValue<void>> {
 
   /// Verificar si el préstamo está completamente pagado
   Future<void> _checkLoanCompletion(String installmentId) async {
-    final installment = await _client
+    // Obtener el loan_id de la cuota
+    final installmentResult = await _client
         .from('installments')
         .select('loan_id')
         .eq('id', installmentId)
-        .single();
+        .maybeSingle();
 
-    final loanId = installment['loan_id'] as String;
+    if (installmentResult == null) return;
+    
+    final loanId = installmentResult['loan_id'] as String;
 
-    // Verificar si hay cuotas pendientes
+    // Verificar si hay cuotas pendientes (exclude la que acabamos de pagar)
     final pending = await _client
         .from('installments')
         .select('id')
         .eq('loan_id', loanId)
         .eq('estado', 'pendiente')
+        .neq('id', installmentId)
         .maybeSingle();
 
     if (pending == null) {
@@ -295,7 +393,7 @@ class PaymentNotifier extends StateNotifier<AsyncValue<void>> {
 
 /// Provider para el notifier de pagos
 final paymentNotifierProvider = StateNotifierProvider<PaymentNotifier, AsyncValue<void>>((ref) {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   return PaymentNotifier(client, ref);
 });
 

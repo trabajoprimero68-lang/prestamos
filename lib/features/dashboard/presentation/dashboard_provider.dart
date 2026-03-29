@@ -8,8 +8,8 @@ import '../../auth/domain/providers/auth_provider.dart';
 
 /// Provider para obtener préstamos a entregar
 final pendingDeliveriesProvider = FutureProvider<List<Loan>>((ref) async {
-  final client = ref.watch(supabaseClientProvider);
-  
+  final client = Supabase.instance.client;
+   
   final response = await client
       .from('loans')
       .select('''
@@ -24,7 +24,7 @@ final pendingDeliveriesProvider = FutureProvider<List<Loan>>((ref) async {
 
 /// Provider para obtener cuotas a cobrar hoy
 final todayInstallmentsProvider = FutureProvider<List<Installment>>((ref) async {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   final today = DateTime.now();
   final dateStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
   
@@ -45,7 +45,7 @@ final todayInstallmentsProvider = FutureProvider<List<Installment>>((ref) async 
 
 /// Provider para obtener cuotas pendientes (atrasadas)
 final overdueInstallmentsProvider = FutureProvider<List<Installment>>((ref) async {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   final today = DateTime.now();
   final dateStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
   
@@ -65,7 +65,7 @@ final overdueInstallmentsProvider = FutureProvider<List<Installment>>((ref) asyn
 
 /// Provider para obtener la caja actual del cobrador
 final currentBoxProvider = FutureProvider<CashBox?>((ref) async {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   final user = ref.watch(currentUserProvider);
   
   final userValue = user.valueOrNull;

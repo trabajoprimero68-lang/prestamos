@@ -6,41 +6,56 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../data/auth_repository.dart';
 import '../entities/user.dart' as app;
 
-/// Provider para el cliente de Supabase
+/// Provider para el cliente de Supabase - se ejecuta lazily
 final supabaseClientProvider = Provider<SupabaseClient>((ref) {
+  // Usar Supabase.instance solo cuando se necesita
   return Supabase.instance.client;
 });
 
 /// Provider para el repositorio de auth
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
-  final client = ref.watch(supabaseClientProvider);
+  // Obtener el cliente lazily
+  final client = Supabase.instance.client;
   return AuthRepository(client);
 });
 
 /// Provider para el estado de autenticación
 final authStateProvider = StreamProvider<AuthState>((ref) {
-  final repo = ref.watch(authRepositoryProvider);
-  return repo.authStateChanges;
+  final client = Supabase.instance.client;
+  return client.auth.onAuthStateChange;
 });
 
 /// Provider para el usuario actual
 final currentUserProvider = FutureProvider<app.User?>((ref) async {
-  final repo = ref.watch(authRepositoryProvider);
-  final session = repo.currentUser;
+  final client = Supabase.instance.client;
+  final session = client.auth.currentSession;
   
   if (session == null) return null;
   
   // Cargar perfil para obtener el rol
-  final profile = await repo.getProfile(session.id);
-  return profile ?? session;
+  final profile = await client
+      .from('profiles')
+      .select()
+      .eq('id', session.user.id)
+      .maybeSingle();
+  
+  if (profile != null) {
+    return app.User.fromJson(profile);
+  }
+  
+  return app.User(
+    id: session.user.id,
+    email: session.user.email ?? '',
+    role: app.UserRole.cobrador,
+  );
 });
 
 /// Notifier para manejar login/logout
 class AuthNotifier extends StateNotifier<AsyncValue<void>> {
-  final AuthRepository _repo;
+  final SupabaseClient _client;
   final Ref _ref;
 
-  AuthNotifier(this._repo, this._ref) : super(const AsyncValue.data(null));
+  AuthNotifier(this._client, this._ref) : super(const AsyncValue.data(null));
 
   Future<bool> signIn({
     required String email,
@@ -49,7 +64,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<void>> {
     state = const AsyncValue.loading();
     
     try {
-      final response = await _repo.signIn(
+      final response = await _client.auth.signInWithPassword(
         email: email,
         password: password,
       );
@@ -73,7 +88,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<void>> {
     state = const AsyncValue.loading();
     
     try {
-      await _repo.signOut();
+      await _client.auth.signOut();
       _ref.invalidate(currentUserProvider);
       state = const AsyncValue.data(null);
     } catch (e, st) {
@@ -84,6 +99,6 @@ class AuthNotifier extends StateNotifier<AsyncValue<void>> {
 
 /// Provider para el notifier de auth
 final authNotifierProvider = StateNotifierProvider<AuthNotifier, AsyncValue<void>>((ref) {
-  final repo = ref.watch(authRepositoryProvider);
-  return AuthNotifier(repo, ref);
+  final client = Supabase.instance.client;
+  return AuthNotifier(client, ref);
 });

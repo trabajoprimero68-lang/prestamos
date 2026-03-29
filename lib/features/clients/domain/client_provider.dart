@@ -4,11 +4,10 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../domain/entities/client_entity.dart';
-import '../../auth/domain/providers/auth_provider.dart';
 
 /// Provider para obtener todos los clientes activos
 final clientsProvider = FutureProvider<List<ClientEntity>>((ref) async {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   
   final response = await client
       .from('clients')
@@ -21,7 +20,7 @@ final clientsProvider = FutureProvider<List<ClientEntity>>((ref) async {
 
 /// Provider para obtener un cliente específico
 final clientProvider = FutureProvider.family<ClientEntity?, String>((ref, id) async {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   
   final response = await client
       .from('clients')
@@ -37,7 +36,7 @@ final clientProvider = FutureProvider.family<ClientEntity?, String>((ref, id) as
 class ClientNotifier extends StateNotifier<AsyncValue<List<ClientEntity>>> {
   final SupabaseClient _client;
 
-  ClientNotifier(this._client) : super(const AsyncValue.loading()) {
+  ClientNotifier(this._client) : super(const AsyncValue.data([])) {
     loadClients();
   }
 
@@ -74,7 +73,8 @@ class ClientNotifier extends StateNotifier<AsyncValue<List<ClientEntity>>> {
       
       await loadClients();
       return true;
-    } catch (e) {
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
       return false;
     }
   }
@@ -97,7 +97,8 @@ class ClientNotifier extends StateNotifier<AsyncValue<List<ClientEntity>>> {
       
       await loadClients();
       return true;
-    } catch (e) {
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
       return false;
     }
   }
@@ -111,7 +112,8 @@ class ClientNotifier extends StateNotifier<AsyncValue<List<ClientEntity>>> {
       
       await loadClients();
       return true;
-    } catch (e) {
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
       return false;
     }
   }
@@ -119,6 +121,6 @@ class ClientNotifier extends StateNotifier<AsyncValue<List<ClientEntity>>> {
 
 /// Provider para el notifier de clientes
 final clientNotifierProvider = StateNotifierProvider<ClientNotifier, AsyncValue<List<ClientEntity>>>((ref) {
-  final client = ref.watch(supabaseClientProvider);
+  final client = Supabase.instance.client;
   return ClientNotifier(client);
 });
